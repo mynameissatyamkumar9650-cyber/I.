@@ -1,1 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stockfish Chess</title>
 
+<!-- Chessboard UI library -->
+<link rel="stylesheet"
+ href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css">
+
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;
+ background:#111827;
+ color:#f9fafb;
+ font-family:Arial,sans-serif;
+ min-height:100vh;
+}
+header{
+ padding:20px 15px;
+ text-align:center;
+ background:#0b1220;
+ border-bottom:1px solid #273449;
+}
+header h1{margin:0;font-size:26px}
+header p{color:#9ca3af;margin:7px 0 0;font-size:14px}
+.container{
+ width:min(100%,850px);
+ margin:auto;
+ padding:18px 12px 35px;
+}
+.layout{
+ display:grid;
+ grid-template-columns:minmax(0,500px) minmax(0,1fr);
+ gap:18px;
+ align-items:start;
+}
+.board-area{width:100%;max-width:500px;margin:auto}
+.player{
+ display:flex;
+ justify-content:space-between;
+ align-items:center;
+ padding:10px 12px;
+ background:#1f2937;
+ border-radius:9px;
+ margin:8px 0;
+}
+.player small{color:#9ca3af}
+#board{width:100%;touch-action:pan-y}
+.panel{
+ background:#1f2937;
+ border:1px solid #374151;
+ border-radius:12px;
+ padding:15px;
+}
+.panel h2{font-size:17px;margin:0 0 14px}
+label{display:block;font-size:13px;color:#d1d5db;margin:13px 0 6px}
+select,button{
+ width:100%;
+ padding:11px;
+ border:0;
+ border-radius:8px;
+ font-size:14px;
+}
+select{background:#111827;color:white;border:1px solid #4b5563}
+button{cursor:pointer;font-weight:bold;margin-top:9px}
+.primary{background:#a3e635;color:#17200a}
+.secondary{background:#374151;color:white}
+.status{
+ margin-top:13px;
+ padding:12px;
+ border-radius:8px;
+ background:#111827;
+ font-size:14px;
+ line-height:1.5;
+ overflow-wrap:anywhere;
+}
+#engineStatus{color:#a3e635}
+#moves{
+ margin-top:12px;
+ background:#111827;
+ border-radius:8px;
+ padding:10px;
+ min-height:70px;
+ max-height:180px;
+ overflow:auto;
+ font-size:13px;
+ line-height:1.8;
+ overflow-wrap:anywhere;
+}
+.note{font-size:12px;color:#9ca3af;line-height:1.6;margin-top:14px}
+@media(max-width:680px){
+ .layout{grid-template-columns:1fr}
+ .board-area{max-width:500px}
+ .panel{margin-top:3px}
+ header h1{font-size:23px}
+}
+</style>
+</head>
+
+<body>
+<header>
+ <h1>♟ Stockfish Chess</h1>
+ <p>Play chess against a powerful engine</p>
+</header>
+
+<main class="container">
+ <div class="layout">
+  <section class="board-area">
+   <div class="player">
+    <span id="topName">🤖 Stockfish AI</span>
+    <small id="topSide">Black</small>
+   </div>
+
+   <div id="board"></div>
+
+   <div class="player">
+    <span id="bottomName">👤 You</span>
+    <small id="bottomSide">White</small>
+   </div>
+  </section>
+
+  <aside class="panel">
+   <h2>⚙️ Game Settings</h2>
+
+   <label for="playerColor">Play as</label>
+   <select id="playerColor">
+    <option value="w">White</option>
+    <option value="b">Black</option>
+   </select>
+
+   <label for="depth">AI search depth</label>
+   <select id="depth">
+    <option value="5">Depth 5 — Faster</option>
+    <option value="10" selected>Depth 10 — Balanced</option>
+    <option value="15">Depth 15 — Slower</option>
+   </select>
+
+   <button class="primary" id="newGame">♟ New Game</button>
+   <button class="secondary" id="undo">↩ Undo Last Turn</button>
+   <button class="secondary" id="flip">⇅ Flip Board</button>
+
+   <div class="status">
+    <div><strong>Game:</strong> <span id="gameStatus">Starting…</span></div>
+    <div style="margin-top:7px"><strong>Engine:</strong> <span id="engineStatus">Loading Stockfish…</span></div>
+   </div>
+
+   <label>Moves</label>
+   <div id="moves">No moves yet.</div>
+
+   <p class="note">
+    Stockfish runs in your browser. The first load may take a little time.
+    A deeper search can take longer, especially on mobile devices.
+   </p>
+  </aside>
+ </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+
+<script>
+(() => {
+ "use strict";
+
+ const $ = id => document.getElementById(id);
+ const game = new Chess();
+
+ let board = null;
+ let engine = null;
+ let engineReady = false;
+ let thinking = false;
+ let playerColor = "w";
+ let gameToken = 0;
+ let currentSearch = 0;
+
+ function setEngineStatus(message) {
+   $("engineStatus").textContent = message;
+ }
+
+ function setGameStatus(message) {
+   $("gameStatus").textContent = message;
+ }
+
+ function updatePlayerLabels() {
+   const topIsWhite = playerColor === "b";
+   $("topName").textContent = topIsWhite ? "👤 You" : "🤖 Stockfish AI";
+   $("bottomName").textContent = topIsWhite ? "🤖 Stockfish AI" : "👤 You";
+   $("topSide").textContent = topIsWhite ? "White" : "Black";
+   $("bottomSide").textContent = topIsWhite ? "Black" : "White";
+ }
+
+ function renderMoves() {
+   const history = game.history();
+   if (!history.length) {
+     $("moves").textContent = "No moves yet.";
+     return;
+   }
+
+   let output = "";
+   for (let i = 0; i < history.length; i += 2) {
+     output += (Math.floor(i / 2) + 1) + ". " +
+       history[i] + (history[i + 1] ? " " + history[i + 1] : "") + "\n";
+   }
+   $("moves").textContent = output;
+   $("moves").scrollTop = $("moves").scrollHeight;
+ }
+
+ function updateStatus() {
+   renderMoves();
+
+   if (game.in_checkmate()) {
+     setGameStatus(
+       game.turn() === playerColor
+         ? "Checkmate — Stockfish wins!"
+         : "Checkmate — You win!"
+     );
+     return;
+   }
+
+   if (game.in_draw()) {
+     setGameStatus("Draw");
+     return;
+   }
+
+   if (game.in_stalemate()) {
+     setGameStatus("Stalemate — Draw");
+     return;
+   }
+
+   if (game.in_check()) {
+     setGameStatus(
+       (game.turn() === playerColor ? "Your" : "AI's") + " king is in check"
+     );
+     return;
+   }
+
+   setGameStatus(game.turn() === playerColor ? "Your turn" : "Stockfish thinking…");
+ }
+
+ function updateBoard() {
+   if (board) board.position(game.fen());
+   updateStatus();
+ }
+
+ function stopSearch() {
+   currentSearch++;
+   thinking = false;
+
+   if (engine && engineReady) {
+     try {
+       engine.postMessage("stop");
+     } catch (_) {}
+   }
+ }
+
+ function initEngine() {
+   try {
+     // This JS file must be in the same folder as the matching WASM file.
+     engine = new Worker("./stockfish-19-lite-single.js");
+
+     engine.onmessage = function(event) {
+       const message = String(event.data || "");
+
+       if (message === "uciok") {
+         engine.postMessage("isready");
+         return;
+       }
+
+       if (message === "readyok") {
+         engineReady = true;
+         setEngineStatus("Ready ✓");
+         if (game.turn() !== playerColor) makeAIMove();
+         return;
+       }
+
+       if (message.startsWith("info depth")) {
+         const match = message.match(/depth\s+(\d+)/);
+         if (match) setEngineStatus("Thinking — depth " + match[1]);
+         return;
+       }
+
+       if (message.startsWith("bestmove")) {
+         const searchId = currentSearch;
+         thinking = false;
+
+         const parts = message.split(/\s+/);
+         const bestMove = parts[1];
+
+         if (!bestMove || bestMove === "(none)") {
+           updateStatus();
+           return;
+         }
+
+         // A stale engine reply must not change a newer game.
+         if (searchId !== activeSearchId) return;
+
+         const move = {
+           from: bestMove.substring(0, 2),
+           to: bestMove.substring(2, 4)
+         };
+
+         if (bestMove.length >= 5) {
+           move.promotion = bestMove[4].toLowerCase();
+         }
+
+         const result = game.move(move);
+         if (result) {
+           updateBoard();
+           if (!game.game_over() && game.turn() !== playerColor) {
+             makeAIMove();
+           }
+         }
+       }
+     };
+
+     engine.onerror = function() {
+       setEngineStatus("Load error — check JS/WASM files");
+     };
+
+     engine.postMessage("uci");
+   } catch (error) {
+     setEngineStatus("Could not start engine");
+     console.error(error);
+   }
+ }
+
+ let activeSearchId = 0;
+
+ function makeAIMove() {
+   if (!engineReady || thinking || game.game_over() || game.turn() === playerColor) return;
+
+   thinking = true;
+   activeSearchId = ++currentSearch;
+   const mySearchId = activeSearchId;
+
+   setGameStatus("Stockfish is thinking…");
+   setEngineStatus("Searching…");
+
+   engine.postMessage("ucinewgame");
+   engine.postMessage("isready");
+
+   const fen = game.fen();
+   const depth = parseInt($("depth").value, 10);
+
+   // Wait until the current engine state is ready before searching.
+   const previousHandler = engine.onmessage;
+   engine.postMessage("position fen " + fen);
+   engine.postMessage("go depth " + depth);
+ }
+
+ function onDragStart(source, piece) {
+   if (game.game_over() || thinking || !engineReady) return false;
+
+   if (game.turn() !== playerColor) return false;
+
+   if (playerColor === "w" && piece.startsWith("b")) return false;
+   if (playerColor === "b" && piece.startsWith("w")) return false;
+ }
+
+ function onDrop(source, target) {
+   const move = game.move({
+     from: source,
+     to: target,
+     promotion: "q"
+   });
+
+   if (move === null) return "snapback";
+
+   updateBoard();
+
+   if (!game.game_over()) {
+     makeAIMove();
+   }
+ }
+
+ function onSnapEnd() {
+   if (board) board.position(game.fen());
+ }
+
+ function startNewGame() {
+   gameToken++;
+   stopSearch();
+   game.reset();
+   playerColor = $("playerColor").value;
+   updatePlayerLabels();
+
+   if (board) {
+     board.orientation(playerColor === "w" ? "white" : "black");
+     board.position("start");
+   }
+
+   updateStatus();
+
+   if (engineReady && playerColor === "b") {
+     makeAIMove();
+   }
+ }
+
+ $("newGame").addEventListener("click", startNewGame);
+
+ $("undo").addEventListener("click", function() {
+   stopSearch();
+
+   // Undo the AI's last move and the player's previous move.
+   if (game.history().length) game.undo();
+   if (game.history().length && game.turn() !== playerColor) game.undo();
+
+   updateBoard();
+
+   if (engineReady && !game.game_over() && game.turn() !== playerColor) {
+     makeAIMove();
+   }
+ });
+
+ $("flip").addEventListener("click", function() {
+   if (board) board.flip();
+ });
+
+ $("playerColor").addEventListener("change", startNewGame);
+
+ board = Chessboard("board", {
+   position: "start",
+   draggable: true,
+   pieceTheme: "https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png",
+   onDragStart: onDragStart,
+   onDrop: onDrop,
+   onSnapEnd: onSnapEnd
+ });
+
+ window.addEventListener("resize", function() {
+   if (board) board.resize();
+ });
+
+ updatePlayerLabels();
+ updateStatus();
+ initEngine();
+})();
+</script>
+</body>
+</html>
